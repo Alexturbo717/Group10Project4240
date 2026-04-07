@@ -1,1 +1,0 @@
-This is a project for digital image processing where we use pythin to make a webcam detect a person in scope
