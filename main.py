@@ -1,83 +1,83 @@
-## Group 10 CSCE4240 Project 
+## Group 10 CSCE4240 Project
 ## Abdul Hashmi, Alexander Surma, Sterling Hardy
 import cv2
 import os
 import numpy as np
+import insightface
+from insightface.app import FaceAnalysis
 
-def load_known_faces(known_faces_dir):
-    # Load known faces from a directory.
-    # Each image file should be named after the person (e.g., 'John_Doe.jpg').
-    # Returns a list of (name, face_encoding) tuples.
+# CONSTANTS - change if need to tweak
+KNOWN_FACES_DIR = "known_faces"   # one subfolder per person
+SIMILARITY_THRESHOLD = 0.50       # cosine similarity: higher = stricter (0.0-1.0)
+PROCESS_EVERY_N = 2               # run recognition every N frames to stay smooth
 
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
+# Load InsightFace buffalo_sc model it's a lightweight but accurate model
+def load_model():
+    app = FaceAnalysis(
+        name="buffalo_sc",
+        providers=["CPUExecutionProvider"]  # use CPU; change to CUDAExecutionProvider if you have a GPU
+    )
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    return app
 
-    known_faces = []   # list of (label_id, name)
-    face_images = []   # grayscale face crops
-    labels = []        # integer label per face
+# This load a person face from the Known_faces
+def load_known_faces(known_faces_dir, app):
+    known_embeddings = []
+    known_names = []
 
     if not os.path.exists(known_faces_dir):
-        print(f"Warning: Known faces directory '{known_faces_dir}' not found.")
-        print("Creating the directory — add images named 'Firstname_Lastname.jpg' to it.")
+        print(f"Warning: '{known_faces_dir}' not found. Creating it.")
+        print("Add one subfolder per person, e.g.  known_faces/John Doe/1.jpg")
         os.makedirs(known_faces_dir)
-        return recognizer, known_faces
+        return known_embeddings, known_names
 
-    label_id = 0
-    for filename in os.listdir(known_faces_dir):
-        if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-            name = os.path.splitext(filename)[0].replace('_', ' ')
-            img_path = os.path.join(known_faces_dir, filename)
+    for person_name in sorted(os.listdir(known_faces_dir)):
+        person_dir = os.path.join(known_faces_dir, person_name)
+        # skip loose files in root
+        if not os.path.isdir(person_dir):
+            continue  
+        print(f"\n  Person: '{person_name}'")
+        loaded = 0
+
+        for filename in sorted(os.listdir(person_dir)):
+            if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+            img_path = os.path.join(person_dir, filename)
             img = cv2.imread(img_path)
             if img is None:
-                print(f"Warning: Could not read image '{img_path}'. Skipping.")
+                print(f"    Warning: could not read '{img_path}'. Skipping.")
                 continue
-
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            detected = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-
-            if len(detected) == 0:
-                print(f"Warning: No face detected in '{filename}'. Skipping.")
+            # InsightFace works directly on BGR images (OpenCV default)
+            faces = app.get(img)
+            if not faces:
+                print(f"    Warning: no face found in '{filename}'. Skipping.")
                 continue
+            # Use the largest face in the photo
+            face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
 
-            # Use the largest detected face
-            (x, y, w, h) = max(detected, key=lambda r: r[2] * r[3])
-            face_crop = gray[y:y+h, x:x+w]
-            face_images.append(face_crop)
-            labels.append(label_id)
-            known_faces.append((label_id, name))
-            print(f"  Loaded: {name} (label {label_id})")
-            label_id += 1
+            # Normalize the embedding to unit length for cosine similarity
+            embedding = face.embedding
+            embedding = embedding / np.linalg.norm(embedding)
+            known_embeddings.append(embedding)
+            known_names.append(person_name)
+            loaded += 1
+    return known_embeddings, known_names
 
-    if face_images:
-        recognizer.train(face_images, np.array(labels))
-        print(f"Recognizer trained on {len(face_images)} face(s).")
-    else:
-        print("No valid face images found in the known faces directory.")
-
-    return recognizer, known_faces
-
-
+# MAIN
 def main():
-    KNOWN_FACES_DIR = "known_faces"   # folder with reference images
-    CONFIDENCE_THRESHOLD = 80         # lower = stricter match
+    app = load_model()
 
-    print(f"Loading known faces from '{KNOWN_FACES_DIR}' ...")
-    recognizer, known_faces = load_known_faces(KNOWN_FACES_DIR)
+    print(f"\nLoading known faces from '{KNOWN_FACES_DIR}' ...")
+    known_embeddings, known_names = load_known_faces(KNOWN_FACES_DIR, app)
+    ready = len(known_embeddings) > 0
 
-    # Build a quick id to name lookup
-    id_to_name = {label_id: name for label_id, name in known_faces}
-    recognizer_ready = len(known_faces) > 0
-
-    # Load Haar Cascade for detection
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-    # Start webcam
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
-
-    print("Press 'q' to quit.")
+    print("\nRunning. Press 'q' to quit.")
+    frame_count  = 0
+    last_results = []  # [(box, label, matched)]
 
     while True:
         ret, frame = cap.read()
@@ -85,46 +85,61 @@ def main():
             print("Error: Could not read frame.")
             break
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-        )
+        frame_count += 1
 
-        for (x, y, w, h) in faces:
-            face_crop = gray[y:y+h, x:x+w]
+        if frame_count % PROCESS_EVERY_N == 0:
+            faces = app.get(frame)
+            last_results = []
 
-            if recognizer_ready:
-                label_id, confidence = recognizer.predict(face_crop)
-                if confidence < CONFIDENCE_THRESHOLD:
-                    name = id_to_name.get(label_id, "Unknown")
-                    box_color = (0, 255, 0)        # green for recognized
+            for face in faces:
+                x1, y1, x2, y2 = [int(v) for v in face.bbox]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+                if ready and face.embedding is not None:
+                    # Normalize live embedding then compute cosine similarity
+                    # against all stored embeddings in one vectorized operation
+                    live_emb = face.embedding / np.linalg.norm(face.embedding)
+                    similarities = np.dot(known_embeddings, live_emb)
+
+                    best_idx  = int(np.argmax(similarities))
+                    best_score = float(similarities[best_idx])
+
+                    if best_score >= SIMILARITY_THRESHOLD:
+                        name    = known_names[best_idx]
+                        matched = True
+                    else:
+                        name    = "Unknown"
+                        matched = False
+
+                    label = f"{name}  ({best_score:.2f})"
                 else:
-                    name = "Unknown"
-                    box_color = (0, 0, 255)        # red for unknown
+                    name, label, matched = "No DB", "No DB", False
 
-            # Draw bounding box
-            cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
+                last_results.append(((x1, y1, x2, y2), label, matched))
 
-            # Draw name label with a filled background for readability
-            label_text = f"{name}"
-            (text_w, text_h), baseline = cv2.getTextSize(
-                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2
+        # Draw boxes and labels from last_results
+        for (x1, y1, x2, y2), label, matched in last_results:
+            color = (0, 200, 0) if matched else (0, 0, 220)  # green / red
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+            (tw, th), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2
             )
             cv2.rectangle(
                 frame,
-                (x, y - text_h - baseline - 6),
-                (x + text_w + 4, y),
-                box_color,
-                cv2.FILLED
+                (x1, y1 - th - baseline - 8),
+                (x1 + tw + 6, y1),
+                color, cv2.FILLED
             )
             cv2.putText(
-                frame, label_text,
-                (x + 2, y - baseline - 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2
+                frame, label,
+                (x1 + 3, y1 - baseline - 3),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2
             )
 
-        cv2.imshow('Face Recognition', frame)
-
+        cv2.imshow('Face Recognition — press Q to quit', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
