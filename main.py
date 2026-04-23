@@ -78,6 +78,7 @@ def main():
     print("\nRunning. Press 'q' to quit.")
     frame_count  = 0
     last_results = []  # [(box, label, matched)]
+    show_unknown_prompt = False
 
     while True:
         ret, frame = cap.read()
@@ -90,6 +91,7 @@ def main():
         if frame_count % PROCESS_EVERY_N == 0:
             faces = app.get(frame)
             last_results = []
+            show_unknown_prompt = False
 
             for face in faces:
                 x1, y1, x2, y2 = [int(v) for v in face.bbox]
@@ -111,6 +113,7 @@ def main():
                     else:
                         name    = "Unknown"
                         matched = False
+                        show_unknown_prompt = True
 
                     label = f"{name}  ({best_score:.2f})"
                 else:
@@ -138,10 +141,29 @@ def main():
                 (x1 + 3, y1 - baseline - 3),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2
             )
+        if show_unknown_prompt:
+            overlay = frame.copy()
 
-        cv2.imshow('Face Recognition — press Q to quit', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            # dark box in center
+            cv2.rectangle(overlay, (120, 180), (520, 280), (40, 40, 40), -1)
+            cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
+
+            cv2.rectangle(frame, (120, 180), (520, 280), (255, 255, 255), 2)
+            cv2.putText(frame, "Unknown person detected", (155, 215),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+            cv2.putText(frame, "Would you like to add this user?", (135, 245),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            cv2.putText(frame, "Press Y for Yes", (225, 270),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            cv2.imshow('Face Recognition — press Q to quit', frame)
+            key = cv2.waitKey(1) & 0xFF
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            if show_unknown_prompt and key == ord('y'):
+                print("Yes pressed for unknown user.")
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
     cap.release()
     cv2.destroyAllWindows()

@@ -1,4 +1,4 @@
 This is a project for digital image processing where we use pythin to make a webcam detect a person in scope
 
-how to install required libraries for Insightface
-pip install insightface onnxruntime opencv-contrib-python numpy
+how to install required libraries
+py -m pip install -r requirements.txt
