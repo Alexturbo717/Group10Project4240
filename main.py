@@ -3,6 +3,7 @@
 import cv2
 import os
 import numpy as np
+from AddFace import save_unknown_face
 import insightface
 import time
 from insightface.app import FaceAnalysis
@@ -91,12 +92,18 @@ def main():
     show_unknown_prompt = False
     face_added_message = False
     face_added_message_time = 0
+    last_unknown_box = None
+
+    entering_name = False
+    typed_name = ""
+    clean_frame_for_save = None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Error: Could not read frame.")
             break
+        clean_frame = frame.copy()
 
         frame_count += 1
 
@@ -125,6 +132,7 @@ def main():
                         name = "Unknown"
                         matched = False
                         unknown_detected = True
+                        last_unknown_box = (x1, y1, x2, y2)
 
                     label = f"{name} ({best_score:.2f})"
 
@@ -135,6 +143,7 @@ def main():
                         label = "Unknown"
                         matched = False
                         unknown_detected = True
+                        last_unknown_box = (x1, y1, x2, y2)
                     else:
                         name = "No Face"
                         label = "No Face"
@@ -142,7 +151,7 @@ def main():
 
                 last_results.append(((x1, y1, x2, y2), label, matched))
 
-            if unknown_detected:
+            if unknown_detected and not entering_name:
                 if unknown_start_time is None:
                     unknown_start_time = time.time()
                 elif time.time() - unknown_start_time >= 10:
@@ -181,7 +190,7 @@ def main():
             )
 
         # Bottom prompt
-        if show_unknown_prompt:
+        if show_unknown_prompt and not entering_name:
             h, w = frame.shape[:2]
             cv2.rectangle(frame, (0, h - 80), (w, h), (40, 40, 40), -1)
             cv2.putText(
@@ -211,21 +220,84 @@ def main():
             if time.time() - face_added_message_time >= 2:
                 face_added_message = False
 
+        if entering_name:
+            h, w = frame.shape[:2]
+            cv2.rectangle(frame, (0, h - 100), (w, h), (40, 40, 40), -1)
+
+            cv2.putText(
+                frame,
+                "Enter name: " + typed_name,
+                (20, h - 55),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                "Press ENTER to save or ESC to cancel",
+                (20, h - 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (200, 200, 200),
+                1
+            )
+
         cv2.imshow('Face Recognition — press Q to quit', frame)
         key = cv2.waitKey(1) & 0xFF
+
+        if entering_name:
+            if key == 13:  # ENTER
+                if typed_name.strip() and last_unknown_box is not None and clean_frame_for_save is not None:
+                    saved = save_unknown_face(
+                        clean_frame_for_save,
+                        last_unknown_box,
+                        typed_name,
+                        KNOWN_FACES_DIR
+                    )
+
+                    if saved:
+                        known_embeddings, known_names = load_known_faces(KNOWN_FACES_DIR, app)
+                        ready = len(known_embeddings) > 0
+
+                        face_added_message = True
+                        face_added_message_time = time.time()
+                        print("Face added and known faces reloaded.")
+
+                    entering_name = False
+                    typed_name = ""
+                    clean_frame_for_save = None
+
+                else:
+                    print("Name was empty or no face available.")
+
+            elif key == 27:  # ESC
+                entering_name = False
+                typed_name = ""
+                clean_frame_for_save = None
+                print("Canceled adding face.")
+
+            elif key == 8:  # BACKSPACE
+                typed_name = typed_name[:-1]
+
+            elif 32 <= key <= 126:
+                typed_name += chr(key)
 
         if key == ord('q'):
             break
 
-        if show_unknown_prompt and key == ord('y'):
+        if show_unknown_prompt and key in [ord('y'), ord('Y')]:
             show_unknown_prompt = False
             unknown_start_time = None
-            face_added_message = True
-            face_added_message_time = time.time()
-            print("Face added.")
+            entering_name = True
+            typed_name = ""
+            clean_frame_for_save = clean_frame.copy()
 
     cap.release()
     cv2.destroyAllWindows()
+
+
 
 if __name__ == "__main__":
     main()
