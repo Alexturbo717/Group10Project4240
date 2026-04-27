@@ -12,6 +12,7 @@ from insightface.app import FaceAnalysis
 KNOWN_FACES_DIR = "known_faces"   # one subfolder per person
 SIMILARITY_THRESHOLD = 0.50       # cosine similarity: higher = stricter (0.0-1.0)
 PROCESS_EVERY_N = 2               # run recognition every N frames to stay smooth
+EVENT_RECORD_FILE = "entrance_records.csv"
 
 # Load InsightFace buffalo_sc model it's a lightweight but accurate model
 def load_model():
@@ -71,6 +72,16 @@ def load_known_faces(known_faces_dir, app):
 
     return known_embeddings, known_names
 
+def record_event(name, status, score):
+    file_exists = os.path.exists(EVENT_RECORD_FILE)
+
+    with open(EVENT_RECORD_FILE, "a") as file:
+        if not file_exists:
+            file.write("time,name,status,confidence\n")
+
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        file.write(f"{timestamp},{name},{status},{score:.2f}\n")
+
 # MAIN
 def main():
     app = load_model()
@@ -79,14 +90,19 @@ def main():
     known_embeddings, known_names = load_known_faces(KNOWN_FACES_DIR, app)
     ready = len(known_embeddings) > 0
 
-    cap = cv2.VideoCapture(0)
+    camera_index = int(input("Choose webcam number, usually 0 or 1: "))
+
+    cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
-        print("Error: Could not open webcam.")
+        print(f"Error: Could not open webcam {camera_index}.")
         return
 
     print("\nRunning. Press 'q' to quit.")
     frame_count = 0
     last_results = []  # [(box, label, matched)]
+    
+    recorded_registered_names = set()
+    unknown_recorded = False
 
     unknown_start_time = None
     show_unknown_prompt = False
@@ -108,6 +124,10 @@ def main():
         "Turn your face RIGHT. Press SPACE.",
         "Look UP. Press SPACE."
     ]
+    
+    window = "Face Recognition — press Q to quit"
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window, 900, 600)
 
     while True:
         ret, frame = cap.read()
@@ -146,6 +166,15 @@ def main():
                         last_unknown_box = (x1, y1, x2, y2)
 
                     label = f"{name} ({best_score:.2f})"
+                    
+                    if matched:
+                        if name not in recorded_registered_names:
+                            record_event(name, "REGISTERED", best_score)
+                            recorded_registered_names.add(name)
+                    else:
+                        if not unknown_recorded:
+                            record_event("Unknown", "STRANGER ALERT", best_score)
+                            unknown_recorded = True
 
                 else:
                     # If no known faces DB yet, still treat detected faces as unknown
@@ -170,6 +199,7 @@ def main():
             else:
                 unknown_start_time = None
                 show_unknown_prompt = False
+                unknown_recorded = False
 
         # Draw boxes and labels from last_results
         for (x1, y1, x2, y2), label, matched in last_results:
@@ -269,7 +299,14 @@ def main():
                 2
             )
 
-        cv2.imshow('Face Recognition — press Q to quit', frame)
+        x, y, window_w, window_h = cv2.getWindowImageRect(window)
+
+        if window_w > 0 and window_h > 0:
+            show_frame = cv2.resize(frame, (window_w, window_h))
+        else:
+            show_frame = frame
+
+        cv2.imshow(window, show_frame)
         key = cv2.waitKey(1) & 0xFF
 
         if capture_mode and key == 32:  # SPACE
@@ -298,7 +335,7 @@ def main():
                     face_added_message = True
                     face_added_message_time = time.time()
 
-                    print("Saved front, left, right images.")
+                    print("Saved front, left, right, and up images.")
 
         if entering_name:
             if key == 13:  # ENTER
