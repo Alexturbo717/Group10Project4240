@@ -8,7 +8,7 @@ def clean_name(name):
     name = re.sub(r'[<>:"/\\|?*]', '', name)
     return name
 
-def save_unknown_face(frame, face_box, name, known_faces_dir="known_faces"):
+def save_unknown_face(frame, face_box, name, known_faces_dir="known_faces", pose_name="front"):
     name = clean_name(name)
 
     if not name:
@@ -34,8 +34,8 @@ def save_unknown_face(frame, face_box, name, known_faces_dir="known_faces"):
         print("Could not crop face.")
         return False
 
-    save_path = os.path.join(person_dir, "1.jpg")
+    save_path = os.path.join(person_dir, f"{pose_name}.jpg")
     cv2.imwrite(save_path, face_img)
 
-    print(f"Saved face image to: {save_path}")
+    print(f"Saved {pose_name} face image to: {save_path}")
     return True

@@ -98,6 +98,17 @@ def main():
     typed_name = ""
     clean_frame_for_save = None
 
+    capture_mode = False
+    capture_step = 0
+
+    capture_poses = ["front", "left", "right", "up"]
+    capture_prompts = [
+        "Look straight at the camera. Press SPACE.",
+        "Turn your face LEFT. Press SPACE.",
+        "Turn your face RIGHT. Press SPACE.",
+        "Look UP. Press SPACE."
+    ]
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -151,10 +162,10 @@ def main():
 
                 last_results.append(((x1, y1, x2, y2), label, matched))
 
-            if unknown_detected and not entering_name:
+            if unknown_detected and not entering_name and not capture_mode:
                 if unknown_start_time is None:
                     unknown_start_time = time.time()
-                elif time.time() - unknown_start_time >= 10:
+                elif time.time() - unknown_start_time >= 7:
                     show_unknown_prompt = True
             else:
                 unknown_start_time = None
@@ -244,33 +255,61 @@ def main():
                 1
             )
 
+        if capture_mode:
+            h, w = frame.shape[:2]
+            cv2.rectangle(frame, (0, h - 80), (w, h), (40, 40, 40), -1)
+
+            cv2.putText(
+                frame,
+                capture_prompts[capture_step],
+                (20, h - 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
+
         cv2.imshow('Face Recognition — press Q to quit', frame)
         key = cv2.waitKey(1) & 0xFF
 
+        if capture_mode and key == 32:  # SPACE
+            pose_name = capture_poses[capture_step]
+
+            saved = save_unknown_face(
+                clean_frame,
+                last_unknown_box,
+                typed_name,
+                KNOWN_FACES_DIR,
+                pose_name
+            )
+
+            if saved:
+                capture_step += 1
+
+                if capture_step >= len(capture_poses):
+                    # reload faces after all 3 images
+                    known_embeddings, known_names = load_known_faces(KNOWN_FACES_DIR, app)
+                    ready = len(known_embeddings) > 0
+
+                    capture_mode = False
+                    capture_step = 0
+                    typed_name = ""
+
+                    face_added_message = True
+                    face_added_message_time = time.time()
+
+                    print("Saved front, left, right images.")
+
         if entering_name:
             if key == 13:  # ENTER
-                if typed_name.strip() and last_unknown_box is not None and clean_frame_for_save is not None:
-                    saved = save_unknown_face(
-                        clean_frame_for_save,
-                        last_unknown_box,
-                        typed_name,
-                        KNOWN_FACES_DIR
-                    )
-
-                    if saved:
-                        known_embeddings, known_names = load_known_faces(KNOWN_FACES_DIR, app)
-                        ready = len(known_embeddings) > 0
-
-                        face_added_message = True
-                        face_added_message_time = time.time()
-                        print("Face added and known faces reloaded.")
-
+                if typed_name.strip():
                     entering_name = False
-                    typed_name = ""
+                    capture_mode = True
+                    capture_step = 0
                     clean_frame_for_save = None
-
+                    print(f"Starting capture for {typed_name}")
                 else:
-                    print("Name was empty or no face available.")
+                    print("Name was empty.")
 
             elif key == 27:  # ESC
                 entering_name = False
@@ -283,6 +322,7 @@ def main():
 
             elif 32 <= key <= 126:
                 typed_name += chr(key)
+                
 
         if key == ord('q'):
             break
